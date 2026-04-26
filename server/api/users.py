@@ -18,14 +18,9 @@ async def update_user_profile(
     current_user: UserProfile = Depends(get_current_user)
 ):
     """Updates the current user's profile (e.g., username)."""
-    profile_path = storage.get_user_profile_file(current_user.user_code)
-    if not profile_path:
-        # This should not happen if get_current_user succeeds
-        raise HTTPException(status_code=404, detail="User profile file not found.")
-
     updated_user = current_user.copy(update=request.dict(exclude_unset=True))
 
-    storage.write_json(profile_path, updated_user.dict())
+    storage.save_user_profile(updated_user.dict())
 
     # FastAPI will correctly serialize this to UserProfileResponse
     return updated_user
@@ -37,15 +32,10 @@ async def get_user_settings(user_code: str = Depends(get_current_user_code)):
     Retrieves the current user's settings.
     If no settings file exists, returns default settings.
     """
-    settings_path = storage.get_user_settings_file(user_code)
-    if not settings_path:
+    if not storage.user_exists(user_code):
         raise HTTPException(status_code=400, detail="Invalid user code format.")
 
-    settings_data = storage.read_json(settings_path)
-    if settings_data is None:
-        return UserSettings()  # Return default settings
-
-    return UserSettings(**settings_data)
+    return storage.get_user_settings(user_code)
 
 
 @router.put("/settings", response_model=UserSettings)
@@ -56,9 +46,8 @@ async def update_user_settings(
     """
     Updates the current user's settings.
     """
-    settings_path = storage.get_user_settings_file(user_code)
-    if not settings_path:
+    if not storage.user_exists(user_code):
         raise HTTPException(status_code=400, detail="Invalid user code format.")
 
-    storage.write_json(settings_path, settings.dict())
+    storage.save_user_settings(user_code, settings)
     return settings
