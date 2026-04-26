@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
-from fastapi.responses import JSONResponse
 from typing import Optional
 
 from server.core import storage, security
@@ -16,16 +15,14 @@ async def get_current_user_code(x_user_code: Optional[str] = Header(None)) -> st
     if not x_user_code:
         raise HTTPException(status_code=401, detail="X-User-Code header missing")
 
-    profile_path = storage.get_user_profile_file(x_user_code)
-    if not profile_path or not profile_path.exists():
+    if not storage.user_exists(x_user_code):
         raise HTTPException(status_code=401, detail="Invalid user code")
 
     return x_user_code
 
 async def get_current_user(user_code: str = Depends(get_current_user_code)) -> UserProfile:
     """Dependency to get the full user profile from the validated user_code."""
-    profile_path = storage.get_user_profile_file(user_code)
-    profile_data = storage.read_json(profile_path)
+    profile_data = storage.get_user_profile(user_code)
     if not profile_data:
         # This case should ideally not be hit if get_current_user_code passed
         raise HTTPException(status_code=404, detail="User profile not found")
@@ -51,12 +48,7 @@ async def register_user(request: RegisterRequest):
         hashed_password=hashed_password,
     )
 
-    # Create user files
-    profile_path = storage.get_user_profile_file(new_user.user_code)
-    storage.write_json(profile_path, new_user.dict())
-
-    # Add to global index
-    storage.add_user_to_index(new_user)
+    storage.save_user_profile(new_user.dict())
 
     # Pass a dict to AuthResponse, Pydantic will validate it against UserProfileResponse
     return AuthResponse(user_code=new_user.user_code, profile=new_user.dict())

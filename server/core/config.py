@@ -14,6 +14,7 @@ DATA_DIR = ROOT_DIR / "data"
 USERS_DIR = DATA_DIR / "users"
 ROOMS_FILE = DATA_DIR / "rooms.json"
 INDEX_FILE = DATA_DIR / "index.json"
+DB_FILE = DATA_DIR / "neuro_dnd.db"
 
 # Game Logic Prompts
 PROMPTS_DIR = ROOT_DIR / "server" / "game_logic" / "prompts"
