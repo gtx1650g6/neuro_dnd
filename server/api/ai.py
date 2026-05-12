@@ -16,6 +16,11 @@ def _is_model_not_found_error(error: Exception) -> bool:
     message = str(error)
     return "models/" in message and "is not found" in message
 
+
+def _is_quota_exceeded_error(error: Exception) -> bool:
+    message = str(error).lower()
+    return "quota" in message and ("exceeded" in message or "429" in message)
+
 def parse_ai_response(response_text: str) -> AICompleteResponse:
     """
     Parses the raw text from the AI, separating the narrative
@@ -126,6 +131,15 @@ async def get_ai_completion(
 
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
+        if _is_quota_exceeded_error(e):
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Gemini API quota exceeded for the configured key/project. "
+                    "Check billing/quota limits in Google AI Studio or use a different API key. "
+                    f"Original error: {str(e)}"
+                )
+            )
         raise HTTPException(status_code=503, detail=f"An error occurred with the AI service: {str(e)}")
 
 
