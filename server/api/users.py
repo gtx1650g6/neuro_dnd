@@ -14,19 +14,6 @@ from server.api.auth import get_current_user_code, get_current_user
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-
-
-def _build_avatar_generation_prompt(user_prompt: str) -> str:
-    """Build a strict instruction wrapper so the model follows only user intent."""
-    prompt = user_prompt.strip()
-    return (
-        "Generate exactly what the user asked for as an avatar image. "
-        "Do not add new objects, styles, moods, backgrounds, clothing, symbols, text, or traits unless explicitly requested. "
-        "If the user asks for a hyper-realistic avatar, the result must be hyper-realistic. "
-        "If the user specifies style, pose, expression, colors, lighting, camera angle, or background, follow those constraints precisely. "
-        "Output a single avatar image that is maximally faithful to the user request. "
-        f"User request: {prompt}"
-    )
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -88,7 +75,12 @@ async def generate_avatar(
         f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
         f"/ai/run/{config.CLOUDFLARE_IMAGE_MODEL}"
     )
-    payload = {"prompt": _build_avatar_generation_prompt(request.prompt)}
+    prompt = request.prompt.strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt must not be empty.")
+
+    # Forward the user prompt as-is; if a style hint is needed, default to realism.
+    payload = {"prompt": prompt, "style": "realism"}
 
     req = urllib.request.Request(
         endpoint,
