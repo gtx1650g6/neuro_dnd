@@ -74,7 +74,9 @@
       getCampaigns: () => api.fetchJSON('/campaigns'),
       updateProfile: (username) => api.fetchJSON('/users/profile', { method: 'PUT', body: { username } }),
       updateAvatar: (avatar_url) => api.fetchJSON('/users/profile', { method: 'PUT', body: { avatar_url } }),
+      generateAvatar: (prompt) => api.fetchJSON('/users/avatar/generate', { method: 'POST', body: { prompt } }),
       getAiCompletion: (campaignId, messages) => api.fetchJSON('/ai/complete', { method: 'POST', body: { campaign_id: campaignId, messages } }),
+      generateImage: (prompt) => api.fetchJSON('/ai/image', { method: 'POST', body: { prompt } }),
       createRoom: (isPublic, name) => api.fetchJSON('/rooms', { method: 'POST', body: { is_public: isPublic, name: name } }),
       joinRoom: (roomCode) => api.fetchJSON('/rooms/join', { method: 'POST', body: { room_code: roomCode } }),
       getRoomDetails: (roomCode) => api.fetchJSON(`/rooms/${roomCode}`),
@@ -256,7 +258,17 @@
 
         const aiResponse = await api.getAiCompletion(campaignId, messagesForApi);
 
-        const assistantMessage = { role: 'assistant', content: aiResponse.text };
+        let generatedImage = null;
+        try {
+          const imageResponse = await api.generateImage(aiResponse.text);
+          if (imageResponse?.image_base64) {
+            generatedImage = `data:${imageResponse.mime_type || 'image/png'};base64,${imageResponse.image_base64}`;
+          }
+        } catch (imageError) {
+          console.warn('Image generation failed:', imageError.message);
+        }
+
+        const assistantMessage = { role: 'assistant', content: aiResponse.text, image: generatedImage };
         state.sceneHistory.push(assistantMessage);
         state.chatMessages.push({ id: Date.now(), text: aiResponse.text, sender: 'AI-Мастер', timestamp: new Date().toLocaleTimeString() });
 
@@ -515,7 +527,7 @@
                     <div class="p-4 bg-gray-800/50 rounded-lg">
                       <div class="flex items-center justify-between">
                         <div class="flex items-center space-x-3">
-                          <div class="w-10 h-10 bg-gradient-to-br from-[var(--primary)] to-[var(--secondary)] rounded-full flex items-center justify-center text-sm font-bold">${p_code === state.user.user_code ? state.user.username.charAt(0) : '?'}</div>
+                          <div class="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-[var(--primary)] to-[var(--secondary)] flex items-center justify-center text-sm font-bold">${p_code === state.user.user_code && state.user?.avatar_url ? `<img src="${state.user.avatar_url}" alt="avatar" class="w-full h-full object-cover">` : (p_code === state.user.user_code ? state.user.username.charAt(0) : '?')}</div>
                           <div><p class="font-semibold">${p_code === state.user.user_code ? t('you') : 'Player'}</p><span class="text-xs text-purple-400">${p_code === room.host_user_code ? t('host') : ''}</span></div>
                         </div>
                         <div class="w-3 h-3 rounded-full bg-green-400"></div>
@@ -880,14 +892,15 @@
     }
 
     async function handleChangeAvatar() {
-        const newAvatarUrl = prompt("Enter the URL for your new avatar:");
-        if (newAvatarUrl && newAvatarUrl.trim() !== "") {
+        const avatarPrompt = prompt("Опишите аватар персонажа (например: гоблин в большой шляпе с угрюмым лицом и большим носом):");
+        if (avatarPrompt && avatarPrompt.trim() !== "") {
             try {
-                const updatedProfile = await api.updateAvatar(newAvatarUrl.trim());
+                const result = await api.generateAvatar(avatarPrompt.trim());
+                const updatedProfile = await api.updateAvatar(result.avatar_url);
                 state.user = updatedProfile;
-                render(); // Re-render to show the new avatar
+                render();
             } catch (error) {
-                alert(`Error updating avatar: ${error.message}`);
+                alert(`Ошибка генерации аватара: ${error.message}`);
             }
         }
     }
@@ -1013,7 +1026,10 @@
             ${state.currentRoom.players.map(p => `
               <div class="p-3 bg-gray-800/50 rounded-lg">
                 <div class="flex justify-between items-start mb-2">
-                  <span class="font-semibold">${p.is_me ? t('you') : p.name}</span>
+                  <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-full overflow-hidden bg-gray-700 flex items-center justify-center text-xs">${p.avatar_url ? `<img src="${p.avatar_url}" alt="avatar" class="w-full h-full object-cover">` : '👤'}</div>
+                    <span class="font-semibold">${p.is_me ? t('you') : p.name}</span>
+                  </div>
                   <span class="text-xs bg-purple-600 px-2 py-1 rounded">${p.class || 'Adventurer'}</span>
                 </div>
                 <div class="w-full bg-gray-700 rounded-full h-2">

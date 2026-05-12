@@ -120,3 +120,20 @@ class AICompleteRequest(BaseModel):
 class AICompleteResponse(BaseModel):
     text: str
     meta: Optional[Dict[str, Any]] = None
+
+
+class AIImageRequest(BaseModel):
+    prompt: str
+
+
+class AIImageResponse(BaseModel):
+    image_base64: str
+    mime_type: str = "image/png"
+
+
+class GenerateAvatarRequest(BaseModel):
+    prompt: str
+
+
+class GenerateAvatarResponse(BaseModel):
+    avatar_url: str
