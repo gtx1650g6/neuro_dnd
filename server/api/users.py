@@ -16,19 +16,66 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 def _build_fallback_avatar_svg(seed: str) -> str:
-    """Create a simple deterministic SVG avatar when image providers are not configured."""
+    """Create a deterministic SVG avatar with varied geometry based on prompt seed."""
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
-    bg = f"#{digest[:6]}"
-    c1 = f"#{digest[6:12]}"
-    c2 = f"#{digest[12:18]}"
-    c3 = f"#{digest[18:24]}"
 
-    return f"""<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'>
+    def h(offset: int, size: int = 2) -> int:
+        return int(digest[offset:offset + size], 16)
+
+    bg = f"#{digest[:6]}"
+    skin = f"#{digest[6:12]}"
+    hair = f"#{digest[12:18]}"
+    accent = f"#{digest[18:24]}"
+    clothing = f"#{digest[24:30]}"
+
+    eye_style = h(30) % 3
+    mouth_style = h(32) % 3
+    accessory = h(34) % 4
+    head_shape = h(36) % 3
+
+    head = "<circle cx='128' cy='94' r='46' fill='{skin}' />"
+    if head_shape == 1:
+        head = "<rect x='84' y='50' width='88' height='88' rx='28' fill='{skin}' />"
+    elif head_shape == 2:
+        head = "<ellipse cx='128' cy='94' rx='50' ry='42' fill='{skin}' />"
+
+    if eye_style == 0:
+        eyes = "<circle cx='110' cy='92' r='5' fill='#111'/><circle cx='146' cy='92' r='5' fill='#111'/>"
+    elif eye_style == 1:
+        eyes = "<rect x='104' y='89' width='12' height='6' rx='3' fill='#111'/><rect x='140' y='89' width='12' height='6' rx='3' fill='#111'/>"
+    else:
+        eyes = "<path d='M102 93 Q110 86 118 93' stroke='#111' stroke-width='3' fill='none'/><path d='M138 93 Q146 86 154 93' stroke='#111' stroke-width='3' fill='none'/>"
+
+    if mouth_style == 0:
+        mouth = "<path d='M108 116 Q128 130 148 116' stroke='#111' stroke-width='4' fill='none' stroke-linecap='round'/>"
+    elif mouth_style == 1:
+        mouth = "<line x1='112' y1='118' x2='144' y2='118' stroke='#111' stroke-width='4' stroke-linecap='round'/>"
+    else:
+        mouth = "<path d='M108 124 Q128 108 148 124' stroke='#111' stroke-width='4' fill='none' stroke-linecap='round'/>"
+
+    accessory_svg = ""
+    if accessory == 0:
+        accessory_svg = "<rect x='88' y='84' width='80' height='20' rx='10' fill='none' stroke='{accent}' stroke-width='6'/>"
+    elif accessory == 1:
+        accessory_svg = "<path d='M86 78 Q128 52 170 78' stroke='{accent}' stroke-width='10' fill='none' stroke-linecap='round'/>"
+    elif accessory == 2:
+        accessory_svg = "<circle cx='96' cy='92' r='8' fill='{accent}'/><circle cx='160' cy='92' r='8' fill='{accent}'/>"
+
+    shoulder_width = 132 + (h(38) % 36)
+    shoulder_x = (256 - shoulder_width) // 2
+    shoulder_rx = 24 + (h(40) % 16)
+
+    svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'>
   <rect width='256' height='256' fill='{bg}' />
-  <circle cx='128' cy='92' r='46' fill='{c1}' opacity='0.9' />
-  <rect x='54' y='152' width='148' height='72' rx='30' fill='{c2}' opacity='0.9' />
-  <path d='M74 198 Q128 150 182 198' stroke='{c3}' stroke-width='12' fill='none' stroke-linecap='round' />
+  <path d='M64 60 Q128 {30 + (h(42) % 26)} 192 60 L192 86 Q128 {50 + (h(44) % 22)} 64 86 Z' fill='{hair}' opacity='0.95'/>
+  {head.format(skin=skin)}
+  {eyes}
+  {mouth}
+  {accessory_svg.format(accent=accent) if accessory_svg else ''}
+  <rect x='{shoulder_x}' y='154' width='{shoulder_width}' height='74' rx='{shoulder_rx}' fill='{clothing}' opacity='0.95' />
+  <path d='M84 200 Q128 {150 + (h(46) % 40)} 172 200' stroke='{accent}' stroke-width='8' fill='none' stroke-linecap='round' opacity='0.8'/>
 </svg>"""
+    return svg
 
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
