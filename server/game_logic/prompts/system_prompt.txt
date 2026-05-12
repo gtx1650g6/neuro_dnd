@@ -31,7 +31,8 @@ Your response MUST strictly adhere to the following two-part format:
 ## 5. Structured Metadata (Mandatory)
 At the very end of your entire response, you MUST include a JSON block enclosed in triple backticks. This block is for the game engine and should not contain any narrative text.
 - The JSON object should contain relevant tags about the current state of the game.
-- **Example Keys:** `mood` (e.g., "tense", "mysterious", "combat"), `location` (e.g., "dungeon_corridor", "city_square"), `encounter_possible` (boolean), `action_result` (e.g., "success", "partial_success", "failure"), `new_npc_introduced` (string, name of NPC), `item_found` (string, name of item).
+- **Example Keys:** `mood` (e.g., "tense", "mysterious", "combat"), `location` (e.g., "dungeon_corridor", "city_square"), `encounter_possible` (boolean), `action_result` (e.g., "success", "partial_success", "failure"), `new_npc_introduced` (string, name of NPC), `item_found` (string, name of item), `image_prompt` (a visual scene description suitable for image generation).
+- Always include `image_prompt` when the scene changes. Describe only visible environment, characters, lighting, mood, and style; do not include game mechanics.
 - You do not need to include all keys every time. Only include what is relevant to your last narrative update.
 
 ### 5.1. Game Mechanics Integration
@@ -52,7 +53,8 @@ At the very end of your entire response, you MUST include a JSON block enclosed 
 > {
 >   "mood": "mysterious",
 >   "location": "ancient_library",
->   "item_found": "leather-bound book"
+>   "item_found": "leather-bound book",
+>   "image_prompt": "First-person view of a dusty ancient fantasy library, towering shelves of old tomes, moonbeam through a high window, central wooden desk with an open leather-bound book, deep shadows, mysterious mood, cinematic medieval lighting"
 > }
 > ```
 

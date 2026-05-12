@@ -1,3 +1,4 @@
+import base64
 import json
 import sqlite3
 import uuid
@@ -111,6 +112,27 @@ def save_user_profile(profile_data: Dict[str, Any]) -> None:
             ),
         )
         conn.commit()
+
+
+def save_user_avatar_image(user_code: str, image_data_uri: str) -> str:
+    header, encoded_image = image_data_uri.split(",", 1)
+    content_type = header.split(";")[0].replace("data:", "")
+    extension = "png" if content_type == "image/png" else "jpg"
+    for old_extension in ("jpg", "png", "jpeg", "webp"):
+        old_path = config.AVATARS_DIR / f"{user_code}.{old_extension}"
+        if old_path.exists():
+            old_path.unlink()
+    avatar_path = config.AVATARS_DIR / f"{user_code}.{extension}"
+    avatar_path.write_bytes(base64.b64decode(encoded_image))
+    return f"/api/users/{user_code}/avatar?v={int(datetime.utcnow().timestamp())}"
+
+
+def get_user_avatar_file(user_code: str) -> Optional[Path]:
+    for extension in ("jpg", "png", "jpeg", "webp"):
+        avatar_path = config.AVATARS_DIR / f"{user_code}.{extension}"
+        if avatar_path.exists():
+            return avatar_path
+    return None
 
 
 def find_user_by_email(email: str) -> Optional[UserProfile]:

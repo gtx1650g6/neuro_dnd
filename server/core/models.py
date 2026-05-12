@@ -120,3 +120,19 @@ class AICompleteRequest(BaseModel):
 class AICompleteResponse(BaseModel):
     text: str
     meta: Optional[Dict[str, Any]] = None
+
+class ImageGenerationRequest(BaseModel):
+    prompt: str
+    seed: Optional[int] = None
+    steps: Optional[int] = None
+
+class AvatarGenerationRequest(BaseModel):
+    prompt: str
+    seed: Optional[int] = None
+    steps: Optional[int] = None
+
+class ImageGenerationResponse(BaseModel):
+    image: str
+    model: str
+    prompt: str
+    seed: Optional[int] = None

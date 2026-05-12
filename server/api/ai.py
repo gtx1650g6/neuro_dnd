@@ -1,13 +1,118 @@
-import re
+import importlib
+import importlib.util
 import json
-import google.generativeai as genai
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from server.core import config, storage
-from server.core.models import AICompleteRequest, AICompleteResponse, Message
-from server.api.auth import get_current_user_code, get_current_user
+from server.core import config, image_generation
+from server.core.models import (
+    AICompleteRequest,
+    AICompleteResponse,
+    ImageGenerationRequest,
+    ImageGenerationResponse,
+)
+from server.api.auth import get_current_user_code
 
 router = APIRouter(prefix="/ai", tags=["AI"])
+
+LEGACY_GEMINI_MODEL_ALIASES = {
+    "gemini-pro": "gemini-2.0-flash",
+    "models/gemini-pro": "gemini-2.0-flash",
+    "gemini-1.5-flash": "gemini-2.0-flash",
+    "models/gemini-1.5-flash": "gemini-2.0-flash",
+    "gemini-1.5-pro": "gemini-2.0-flash",
+    "models/gemini-1.5-pro": "gemini-2.0-flash",
+}
+
+
+class GeminiAPIError(Exception):
+    def __init__(self, message: str, status_code: int = 503, retryable_model_error: bool = False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable_model_error = retryable_model_error
+
+
+def normalize_gemini_model(model: str) -> str:
+    normalized = LEGACY_GEMINI_MODEL_ALIASES.get(model.strip(), model.strip())
+    if normalized.startswith("models/"):
+        normalized = normalized.removeprefix("models/")
+    return normalized
+
+
+def get_configured_gemini_model() -> str:
+    return normalize_gemini_model(config.GEMINI_MODEL or "gemini-2.0-flash")
+
+
+def get_gemini_model_candidates() -> list[str]:
+    candidates = [get_configured_gemini_model()]
+    fallback_models = [m.strip() for m in config.GEMINI_FALLBACK_MODELS.split(",") if m.strip()]
+    candidates.extend(normalize_gemini_model(model) for model in fallback_models)
+    return list(dict.fromkeys(candidates))
+
+
+def get_genai_module():
+    if importlib.util.find_spec("google.genai") is None:
+        raise GeminiAPIError(
+            "The google-genai package is not installed. Run setup.bat again or install it with: "
+            "python -m pip install google-genai",
+            status_code=500,
+        )
+    return importlib.import_module("google.genai")
+
+
+def is_retryable_gemini_model_error(error_message: str) -> bool:
+    lowered = error_message.lower()
+    return "404" in lowered and ("not found" in lowered or "not supported" in lowered)
+
+
+def call_gemini_generate_content(prompt: str) -> str:
+    tried_models: list[str] = []
+    last_model_error: GeminiAPIError | None = None
+
+    for model in get_gemini_model_candidates():
+        tried_models.append(model)
+        try:
+            return call_gemini_model_generate_content(prompt, model)
+        except GeminiAPIError as exc:
+            if exc.retryable_model_error:
+                last_model_error = exc
+                print(f"Gemini model '{model}' is unavailable, trying next fallback model.")
+                continue
+            raise
+
+    tried = ", ".join(tried_models)
+    details = f" Last error: {last_model_error}" if last_model_error else ""
+    raise GeminiAPIError(
+        f"No configured Gemini model is available for generateContent. Tried: {tried}.{details}",
+        status_code=502,
+    )
+
+
+def call_gemini_model_generate_content(prompt: str, model: str) -> str:
+    try:
+        genai = get_genai_module()
+        client = genai.Client(api_key=config.GEMINI_API_KEY)
+        response = client.models.generate_content(model=model, contents=prompt)
+    except GeminiAPIError:
+        raise
+    except Exception as exc:
+        api_message = str(exc)
+        if is_retryable_gemini_model_error(api_message):
+            raise GeminiAPIError(
+                f"Gemini model '{model}' is not available for generate_content. "
+                "The server will try configured fallback models. "
+                f"Original error: {api_message}",
+                status_code=502,
+                retryable_model_error=True,
+            ) from exc
+        raise GeminiAPIError(api_message, status_code=503) from exc
+
+    response_text = getattr(response, "text", None)
+    if not response_text:
+        raise GeminiAPIError("Gemini response did not contain text.", status_code=502)
+    return response_text
+
 
 def parse_ai_response(response_text: str) -> AICompleteResponse:
     """
@@ -70,46 +175,47 @@ async def get_ai_completion(
 ---
 """
 
-    # Combine system prompt with the message history
-    messages_for_ai = [{"role": "system", "content": full_prompt_context}]
-
-    # Convert our Pydantic Message models to dicts for the AI
-    for msg in request.messages:
-        # The Gemini API uses 'model' for the assistant's role
-        role = "model" if msg.role == "assistant" else msg.role
-        messages_for_ai.append({"role": role, "parts": [msg.content]})
-
     # 3. Call Gemini API
+    final_prompt_list = [full_prompt_context]
+    for msg in request.messages:
+        final_prompt_list.append(f"**{msg.role.capitalize()}:** {msg.content}")
+
     try:
-        genai.configure(api_key=config.GEMINI_API_KEY)
-        model = genai.GenerativeModel(config.GEMINI_MODEL)
-
-        # The API expects role/parts format. We need to adapt.
-        # Let's reformat the messages for the `generate_content` method
-        formatted_messages = []
-        for msg in request.messages:
-            role = "model" if msg.role == "assistant" else msg.role
-            formatted_messages.append({'role': role, 'parts': [msg.content]})
-
-        # The last message is the user's prompt, the history is the preceding messages
-        # The library wants a history list and a final prompt.
-        history = formatted_messages[:-1]
-        prompt = formatted_messages[-1]['parts'][0]
-
-        # Let's build a simpler message list, as the `chat` approach is tricky
-        # The `generate_content` method can take a simple list of strings/parts
-        final_prompt_list = [full_prompt_context]
-        for msg in request.messages:
-            final_prompt_list.append(f"**{msg.role.capitalize()}:** {msg.content}")
-
-        response = model.generate_content("\n".join(final_prompt_list))
-
-        # 4. Parse and return response
-        return parse_ai_response(response.text)
-
-    except Exception as e:
+        response_text = call_gemini_generate_content("\n".join(final_prompt_list))
+        return parse_ai_response(response_text)
+    except GeminiAPIError as e:
         print(f"Error calling Gemini API: {e}")
-        raise HTTPException(status_code=503, detail=f"An error occurred with the AI service: {str(e)}")
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+
+
+
+@router.post("/image", response_model=ImageGenerationResponse)
+async def generate_scene_image(
+    request: ImageGenerationRequest,
+    user_code: str = Depends(get_current_user_code),
+):
+    """Generates a scene illustration from a text description using Cloudflare Workers AI."""
+    if not config.CLOUDFLARE_ACCOUNT_ID:
+        raise HTTPException(status_code=500, detail="Cloudflare account ID is not configured on the server.")
+    if not config.CLOUDFLARE_API_TOKEN or config.CLOUDFLARE_API_TOKEN == "__PUT_YOUR_TOKEN_HERE__":
+        raise HTTPException(status_code=500, detail="Cloudflare API token is not configured on the server.")
+
+    if not request.prompt.strip():
+        raise HTTPException(status_code=400, detail="Image prompt cannot be empty.")
+
+    prompt = image_generation.build_scene_prompt(request.prompt)
+
+    try:
+        image = image_generation.call_cloudflare_image_api(prompt=prompt, seed=request.seed, steps=request.steps)
+    except image_generation.ImageGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return ImageGenerationResponse(
+        image=image,
+        model=config.CLOUDFLARE_IMAGE_MODEL,
+        prompt=prompt,
+        seed=request.seed,
+    )
+
 
 # Need to import these from the other routers to avoid circular dependencies
 from server.api.campaigns import get_campaign_details
