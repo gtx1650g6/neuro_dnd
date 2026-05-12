@@ -4,7 +4,6 @@ import json
 import urllib.request
 import urllib.error
 import uuid
-import hashlib
 from pydantic import BaseModel
 from typing import Optional
 
@@ -15,68 +14,19 @@ from server.api.auth import get_current_user_code, get_current_user
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def _build_fallback_avatar_svg(seed: str) -> str:
-    """Create a deterministic SVG avatar with varied geometry based on prompt seed."""
-    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
-    def h(offset: int, size: int = 2) -> int:
-        return int(digest[offset:offset + size], 16)
 
-    bg = f"#{digest[:6]}"
-    skin = f"#{digest[6:12]}"
-    hair = f"#{digest[12:18]}"
-    accent = f"#{digest[18:24]}"
-    clothing = f"#{digest[24:30]}"
-
-    eye_style = h(30) % 3
-    mouth_style = h(32) % 3
-    accessory = h(34) % 4
-    head_shape = h(36) % 3
-
-    head = "<circle cx='128' cy='94' r='46' fill='{skin}' />"
-    if head_shape == 1:
-        head = "<rect x='84' y='50' width='88' height='88' rx='28' fill='{skin}' />"
-    elif head_shape == 2:
-        head = "<ellipse cx='128' cy='94' rx='50' ry='42' fill='{skin}' />"
-
-    if eye_style == 0:
-        eyes = "<circle cx='110' cy='92' r='5' fill='#111'/><circle cx='146' cy='92' r='5' fill='#111'/>"
-    elif eye_style == 1:
-        eyes = "<rect x='104' y='89' width='12' height='6' rx='3' fill='#111'/><rect x='140' y='89' width='12' height='6' rx='3' fill='#111'/>"
-    else:
-        eyes = "<path d='M102 93 Q110 86 118 93' stroke='#111' stroke-width='3' fill='none'/><path d='M138 93 Q146 86 154 93' stroke='#111' stroke-width='3' fill='none'/>"
-
-    if mouth_style == 0:
-        mouth = "<path d='M108 116 Q128 130 148 116' stroke='#111' stroke-width='4' fill='none' stroke-linecap='round'/>"
-    elif mouth_style == 1:
-        mouth = "<line x1='112' y1='118' x2='144' y2='118' stroke='#111' stroke-width='4' stroke-linecap='round'/>"
-    else:
-        mouth = "<path d='M108 124 Q128 108 148 124' stroke='#111' stroke-width='4' fill='none' stroke-linecap='round'/>"
-
-    accessory_svg = ""
-    if accessory == 0:
-        accessory_svg = "<rect x='88' y='84' width='80' height='20' rx='10' fill='none' stroke='{accent}' stroke-width='6'/>"
-    elif accessory == 1:
-        accessory_svg = "<path d='M86 78 Q128 52 170 78' stroke='{accent}' stroke-width='10' fill='none' stroke-linecap='round'/>"
-    elif accessory == 2:
-        accessory_svg = "<circle cx='96' cy='92' r='8' fill='{accent}'/><circle cx='160' cy='92' r='8' fill='{accent}'/>"
-
-    shoulder_width = 132 + (h(38) % 36)
-    shoulder_x = (256 - shoulder_width) // 2
-    shoulder_rx = 24 + (h(40) % 16)
-
-    svg = f"""<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'>
-  <rect width='256' height='256' fill='{bg}' />
-  <path d='M64 60 Q128 {30 + (h(42) % 26)} 192 60 L192 86 Q128 {50 + (h(44) % 22)} 64 86 Z' fill='{hair}' opacity='0.95'/>
-  {head.format(skin=skin)}
-  {eyes}
-  {mouth}
-  {accessory_svg.format(accent=accent) if accessory_svg else ''}
-  <rect x='{shoulder_x}' y='154' width='{shoulder_width}' height='74' rx='{shoulder_rx}' fill='{clothing}' opacity='0.95' />
-  <path d='M84 200 Q128 {150 + (h(46) % 40)} 172 200' stroke='{accent}' stroke-width='8' fill='none' stroke-linecap='round' opacity='0.8'/>
-</svg>"""
-    return svg
-
+def _build_avatar_generation_prompt(user_prompt: str) -> str:
+    """Build a strict instruction wrapper so the model follows only user intent."""
+    prompt = user_prompt.strip()
+    return (
+        "Generate exactly what the user asked for as an avatar image. "
+        "Do not add new objects, styles, moods, backgrounds, clothing, symbols, text, or traits unless explicitly requested. "
+        "If the user asks for a hyper-realistic avatar, the result must be hyper-realistic. "
+        "If the user specifies style, pose, expression, colors, lighting, camera angle, or background, follow those constraints precisely. "
+        "Output a single avatar image that is maximally faithful to the user request. "
+        f"User request: {prompt}"
+    )
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -129,22 +79,16 @@ async def generate_avatar(
 ):
     """Generate an avatar image from prompt, save it on disk, and update user profile."""
     if not config.CLOUDFLARE_API_TOKEN or not config.CLOUDFLARE_ACCOUNT_ID:
-        avatar_name = f"{current_user.user_code}-{uuid.uuid4().hex[:10]}.svg"
-        avatar_path = config.AVATARS_DIR / avatar_name
-        svg_content = _build_fallback_avatar_svg(f"{current_user.user_code}:{request.prompt}")
-        avatar_path.write_text(svg_content, encoding="utf-8")
-
-        avatar_url = f"/assets/avatars/{avatar_name}"
-        updated_user = current_user.copy(update={"avatar_url": avatar_url})
-        storage.save_user_profile(updated_user.dict())
-
-        return GenerateAvatarResponse(avatar_url=avatar_url)
+        raise HTTPException(
+            status_code=503,
+            detail="Avatar generation requires configured Cloudflare AI credentials on the server."
+        )
 
     endpoint = (
         f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
         f"/ai/run/{config.CLOUDFLARE_IMAGE_MODEL}"
     )
-    payload = {"prompt": request.prompt}
+    payload = {"prompt": _build_avatar_generation_prompt(request.prompt)}
 
     req = urllib.request.Request(
         endpoint,
