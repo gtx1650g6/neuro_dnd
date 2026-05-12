@@ -1,9 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException
+import base64
+import json
+import urllib.request
+import urllib.error
+import uuid
 from pydantic import BaseModel
 from typing import Optional
 
-from server.core import storage
-from server.core.models import UserSettings, UserProfile, UserProfileResponse
+from server.core import storage, config
+from server.core.models import UserSettings, UserProfile, UserProfileResponse, GenerateAvatarRequest, GenerateAvatarResponse
 from server.api.auth import get_current_user_code, get_current_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -51,3 +56,59 @@ async def update_user_settings(
 
     storage.save_user_settings(user_code, settings)
     return settings
+
+
+@router.post("/avatar/generate", response_model=GenerateAvatarResponse)
+async def generate_avatar(
+    request: GenerateAvatarRequest,
+    current_user: UserProfile = Depends(get_current_user)
+):
+    """Generate an avatar image from prompt, save it on disk, and update user profile."""
+    if not config.CLOUDFLARE_API_TOKEN or not config.CLOUDFLARE_ACCOUNT_ID:
+        raise HTTPException(status_code=500, detail="Cloudflare image generation is not configured on the server.")
+
+    endpoint = (
+        f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
+        f"/ai/run/{config.CLOUDFLARE_IMAGE_MODEL}"
+    )
+    payload = {"prompt": request.prompt}
+
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read().decode("utf-8"))
+
+        if not result.get("success"):
+            raise HTTPException(status_code=503, detail=f"Cloudflare AI error: {result.get('errors')}")
+
+        image_data = result.get("result", {}).get("image")
+        if not image_data:
+            raise HTTPException(status_code=503, detail="Cloudflare AI did not return an image.")
+
+        image_bytes = base64.b64decode(image_data)
+        avatar_name = f"{current_user.user_code}-{uuid.uuid4().hex[:10]}.png"
+        avatar_path = config.AVATARS_DIR / avatar_name
+        avatar_path.write_bytes(image_bytes)
+
+        avatar_url = f"/assets/avatars/{avatar_name}"
+        updated_user = current_user.copy(update={"avatar_url": avatar_url})
+        storage.save_user_profile(updated_user.dict())
+
+        return GenerateAvatarResponse(avatar_url=avatar_url)
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="ignore")
+        raise HTTPException(status_code=503, detail=f"Cloudflare request failed: {error_body}")
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=503, detail=f"Cloudflare network error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Avatar service error: {str(e)}")

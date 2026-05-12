@@ -1,10 +1,12 @@
 import re
 import json
+import urllib.request
+import urllib.error
 import google.generativeai as genai
 from fastapi import APIRouter, Depends, HTTPException
 
 from server.core import config, storage
-from server.core.models import AICompleteRequest, AICompleteResponse, Message
+from server.core.models import AICompleteRequest, AICompleteResponse, AIImageRequest, AIImageResponse, Message
 from server.api.auth import get_current_user_code, get_current_user
 
 router = APIRouter(prefix="/ai", tags=["AI"])
@@ -110,6 +112,60 @@ async def get_ai_completion(
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
         raise HTTPException(status_code=503, detail=f"An error occurred with the AI service: {str(e)}")
+
+
+
+@router.post("/image", response_model=AIImageResponse)
+async def generate_scene_image(
+    request: AIImageRequest,
+    user_code: str = Depends(get_current_user_code)
+):
+    """Generates a scene image via Cloudflare Workers AI and returns it as base64."""
+    if not user_code:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not config.CLOUDFLARE_API_TOKEN or not config.CLOUDFLARE_ACCOUNT_ID:
+        raise HTTPException(
+            status_code=500,
+            detail="Cloudflare image generation is not configured on the server."
+        )
+
+    endpoint = (
+        f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
+        f"/ai/run/{config.CLOUDFLARE_IMAGE_MODEL}"
+    )
+    payload = {"prompt": request.prompt}
+
+    req = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read().decode("utf-8"))
+
+        if not result.get("success"):
+            raise HTTPException(status_code=503, detail=f"Cloudflare AI error: {result.get('errors')}")
+
+        image_data = result.get("result", {}).get("image")
+        if not image_data:
+            raise HTTPException(status_code=503, detail="Cloudflare AI did not return an image.")
+
+        return AIImageResponse(image_base64=image_data, mime_type="image/png")
+
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="ignore")
+        raise HTTPException(status_code=503, detail=f"Cloudflare request failed: {error_body}")
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=503, detail=f"Cloudflare network error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Image service error: {str(e)}")
 
 # Need to import these from the other routers to avoid circular dependencies
 from server.api.campaigns import get_campaign_details

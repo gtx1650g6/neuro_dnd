@@ -20,11 +20,18 @@ DB_FILE = DATA_DIR / "neuro_dnd.db"
 PROMPTS_DIR = ROOT_DIR / "server" / "game_logic" / "prompts"
 SYSTEM_PROMPT_FILE = PROMPTS_DIR / "system_prompt.txt"
 EXAMPLES_FILE = PROMPTS_DIR / "examples.md"
+AVATARS_DIR = ROOT_DIR / "frontend" / "assets" / "avatars"
 
 
 # --- Gemini AI Configuration ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash") # Use flash for speed and cost, but allow override
+
+
+# --- Cloudflare AI Image Configuration ---
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_IMAGE_MODEL = os.getenv("CLOUDFLARE_IMAGE_MODEL", "@cf/stabilityai/stable-diffusion-xl-base-1.0")
 
 # --- Security ---
 # For simplicity, we're not using a complex signing key, but this is where it would go.
@@ -34,3 +41,4 @@ PASSWORD_SALT = os.getenv("PASSWORD_SALT", "a_not_so_secret_salt_for_dev_passwor
 # --- Ensure directories exist ---
 DATA_DIR.mkdir(exist_ok=True)
 USERS_DIR.mkdir(exist_ok=True)
+AVATARS_DIR.mkdir(parents=True, exist_ok=True)
