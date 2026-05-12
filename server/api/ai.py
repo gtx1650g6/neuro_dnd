@@ -11,6 +11,11 @@ from server.api.auth import get_current_user_code, get_current_user
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
+
+def _is_model_not_found_error(error: Exception) -> bool:
+    message = str(error)
+    return "models/" in message and "is not found" in message
+
 def parse_ai_response(response_text: str) -> AICompleteResponse:
     """
     Parses the raw text from the AI, separating the narrative
@@ -104,7 +109,17 @@ async def get_ai_completion(
         for msg in request.messages:
             final_prompt_list.append(f"**{msg.role.capitalize()}:** {msg.content}")
 
-        response = model.generate_content("\n".join(final_prompt_list))
+        prompt_text = "\n".join(final_prompt_list)
+        try:
+            response = model.generate_content(prompt_text)
+        except Exception as model_error:
+            # Some users may still have legacy GEMINI_MODEL values in .env.
+            # Retry once with a modern default before failing.
+            if _is_model_not_found_error(model_error) and config.GEMINI_MODEL != "gemini-2.0-flash":
+                fallback_model = genai.GenerativeModel("gemini-2.0-flash")
+                response = fallback_model.generate_content(prompt_text)
+            else:
+                raise
 
         # 4. Parse and return response
         return parse_ai_response(response.text)

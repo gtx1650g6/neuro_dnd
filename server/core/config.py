@@ -25,7 +25,7 @@ AVATARS_DIR = ROOT_DIR / "frontend" / "assets" / "avatars"
 
 # --- Gemini AI Configuration ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash") # Use flash for speed and cost, but allow override
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash") # Use flash for speed and cost, but allow override
 
 
 # --- Cloudflare AI Image Configuration ---

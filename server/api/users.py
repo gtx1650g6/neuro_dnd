@@ -4,6 +4,7 @@ import json
 import urllib.request
 import urllib.error
 import uuid
+import hashlib
 from pydantic import BaseModel
 from typing import Optional
 
@@ -12,6 +13,22 @@ from server.core.models import UserSettings, UserProfile, UserProfileResponse, G
 from server.api.auth import get_current_user_code, get_current_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+def _build_fallback_avatar_svg(seed: str) -> str:
+    """Create a simple deterministic SVG avatar when image providers are not configured."""
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    bg = f"#{digest[:6]}"
+    c1 = f"#{digest[6:12]}"
+    c2 = f"#{digest[12:18]}"
+    c3 = f"#{digest[18:24]}"
+
+    return f"""<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'>
+  <rect width='256' height='256' fill='{bg}' />
+  <circle cx='128' cy='92' r='46' fill='{c1}' opacity='0.9' />
+  <rect x='54' y='152' width='148' height='72' rx='30' fill='{c2}' opacity='0.9' />
+  <path d='M74 198 Q128 150 182 198' stroke='{c3}' stroke-width='12' fill='none' stroke-linecap='round' />
+</svg>"""
 
 class UpdateProfileRequest(BaseModel):
     username: Optional[str] = None
@@ -65,7 +82,16 @@ async def generate_avatar(
 ):
     """Generate an avatar image from prompt, save it on disk, and update user profile."""
     if not config.CLOUDFLARE_API_TOKEN or not config.CLOUDFLARE_ACCOUNT_ID:
-        raise HTTPException(status_code=500, detail="Cloudflare image generation is not configured on the server.")
+        avatar_name = f"{current_user.user_code}-{uuid.uuid4().hex[:10]}.svg"
+        avatar_path = config.AVATARS_DIR / avatar_name
+        svg_content = _build_fallback_avatar_svg(f"{current_user.user_code}:{request.prompt}")
+        avatar_path.write_text(svg_content, encoding="utf-8")
+
+        avatar_url = f"/assets/avatars/{avatar_name}"
+        updated_user = current_user.copy(update={"avatar_url": avatar_url})
+        storage.save_user_profile(updated_user.dict())
+
+        return GenerateAvatarResponse(avatar_url=avatar_url)
 
     endpoint = (
         f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
