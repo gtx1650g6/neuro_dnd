@@ -102,16 +102,28 @@ async def generate_avatar(
 
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
-            result = json.loads(response.read().decode("utf-8"))
+            response_body = response.read()
+            content_type = (response.headers.get("Content-Type") or "").lower()
 
-        if not result.get("success"):
-            raise HTTPException(status_code=503, detail=f"Cloudflare AI error: {result.get('errors')}")
+        if "application/json" in content_type:
+            result = json.loads(response_body.decode("utf-8"))
 
-        image_data = result.get("result", {}).get("image")
-        if not image_data:
-            raise HTTPException(status_code=503, detail="Cloudflare AI did not return an image.")
+            if not result.get("success"):
+                raise HTTPException(status_code=503, detail=f"Cloudflare AI error: {result.get('errors')}")
 
-        image_bytes = base64.b64decode(image_data)
+            image_data = result.get("result", {}).get("image")
+            if not image_data:
+                raise HTTPException(status_code=503, detail="Cloudflare AI did not return an image.")
+
+            image_bytes = base64.b64decode(image_data)
+        elif content_type.startswith("image/"):
+            image_bytes = response_body
+        else:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Unexpected avatar response format from Cloudflare (Content-Type: {content_type or 'unknown'})."
+            )
+
         avatar_name = f"{current_user.user_code}-{uuid.uuid4().hex[:10]}.png"
         avatar_path = config.AVATARS_DIR / avatar_name
         avatar_path.write_bytes(image_bytes)
